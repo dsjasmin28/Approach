@@ -91,6 +91,7 @@ header{display:flex;align-items:center;gap:8px;padding:calc(env(safe-area-inset-
 #curImg .no{position:absolute;left:8px;top:8px;background:var(--navy);color:#fff;font-weight:800;border-radius:9px;padding:3px 8px;font-size:12px}
 #curImg .auto{position:absolute;right:8px;top:8px;background:rgba(255,255,255,.92);color:var(--teal);font-weight:800;border-radius:9px;padding:3px 8px;font-size:11px}
 #curImg .auto.off{color:var(--muted)}
+#curImg .cap .m{white-space:pre-line;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 #curImg .cap{position:absolute;left:0;right:0;bottom:0;padding:22px 10px 8px;background:linear-gradient(transparent,rgba(5,22,36,.78));color:#fff;font-size:13px;font-weight:600;line-height:1.35}
 #curImg .cap .d{font-size:11.5px;opacity:.85;font-weight:500}
 #curImg .nav{position:absolute;top:50%;transform:translateY(-50%);width:32px;height:44px;border-radius:10px;background:rgba(255,255,255,.75);display:grid;place-items:center;font-size:18px;font-weight:800;color:var(--navy)}
@@ -355,7 +356,7 @@ function renderCur(){const el=$('cur');const ph=photos();
     <span class="no">${S.sel+1} / ${ph.length}</span>
     <button class="auto${S.auto?'':' off'}" id="autoBtn">${S.auto?'자동 따라가기':'자동 꺼짐 · 켜기'}</button>
     ${S.sel>0?'<button class="nav p" id="prevBtn">‹</button>':''}${S.sel<ph.length-1?'<button class="nav n" id="nextBtn">›</button>':''}
-    <div class="cap">${esc(p.note||'메모 없음')}<div class="d">${d}</div></div></div>`;
+    <div class="cap"><div class="m">${esc(p.note||'메모 없음')}</div><div class="d">${d}</div></div></div>`;
   const im=$('curImg').querySelector('img.ph');im.onclick=()=>openViewer();if(im.complete)fitSide();else im.onload=fitSide;
   $('autoBtn').onclick=e=>{e.stopPropagation();S.auto=!S.auto;if(S.auto&&S.near>=0)select(S.near,true);else renderCur()};
   const pb=$('prevBtn'),nb=$('nextBtn');if(pb)pb.onclick=()=>{S.auto=false;select(S.sel-1,true)};if(nb)nb.onclick=()=>{S.auto=false;select(S.sel+1,true)};
@@ -373,7 +374,7 @@ function openViewer(){const ph=photos();const p=ph[S.sel];if(!p)return;
   const v=document.createElement('div');v.id='viewer';
   v.innerHTML=`<div class="vimg"><img src="${blobUrl(p)}" alt=""></div>
    <div class="vtop"><button id="vEdit">편집</button><button id="vClose">닫기</button></div>
-   <div class="vbar"><div class="t"><b>${S.sel+1}번</b> · ${esc(p.note||'메모 없음')}</div></div>`;
+   <div class="vbar"><div class="t" style="white-space:pre-line;max-height:30vh;overflow:auto"><b>${S.sel+1}번</b> · ${esc(p.note||'메모 없음')}</div></div>`;
   document.body.appendChild(v);
   v.querySelector('img').onclick=e=>e.target.classList.toggle('z');
   $('vClose').onclick=()=>v.remove();$('vEdit').onclick=()=>{v.remove();editPhoto(p)};}
@@ -426,35 +427,114 @@ function editCrag(c){const isNew=!c;c=c||{id:'u'+uid(),name:'',region:'서울/�
 async function addPhotos(files){
   const ph=photos();let order=ph.length?ph[ph.length-1].order+1:1;const needPlace=[];
   const items=[];for(const f of files){const ex=await readExif(f);items.push({f,ex})}
+  const caps=[];
   items.sort((a,b)=>(a.ex.time||0)-(b.ex.time||0));
   let fromGps=0,fromMe=0;
   for(const {f,ex} of items){const blob=await shrink(f);
-    let ll=ex.ll||null,src='exif';
+    let ll=ex.ll||null,src='exif';const box=ex.ll?{capture:false}:await detectPhoto(f);
     const fresh=!ex.time||Math.abs(Date.now()-ex.time)<15*60000||Math.abs(Date.now()-f.lastModified)<15*60000;
-    if(!ll&&S.me&&fresh&&S.me.acc<150){ll=S.me.ll;src='gps';fromMe++}else if(ll)fromGps++;
+    if(!ll&&!box.capture&&S.me&&fresh&&S.me.acc<150){ll=S.me.ll;src='gps';fromMe++}else if(ll)fromGps++;
     const p={id:uid(),crag:S.crag.id,kind:'photo',order:order++,ll,src:ll?src:null,note:'',photo:blob,time:ex.time||f.lastModified||Date.now()};
+    if(box.capture){p.orig=await shrink(f,2400);caps.push({p,box})}
     await DB.put('points',p);S.points.push(p);if(!ll)needPlace.push(p);}
   S.sel=photos().length-1;S.auto=false;drawPoints();renderAll();
+  for(const c of caps)await cropEditor(c.p,c.box,true);
   const n=items.length;toast(`사진 ${n}장 추가 · ${fromGps?`사진 위치 ${fromGps}`:''}${fromGps&&fromMe?', ':''}${fromMe?`현재 위치 ${fromMe}`:''}${needPlace.length?` · 위치 없음 ${needPlace.length}`:''}`,3200);
-  if(n===1&&!needPlace.length)editPhoto(photos()[S.sel],true);
+  if(n===1&&!needPlace.length&&!caps.length)editPhoto(photos()[S.sel],true);
   else if(needPlace.length)placeQueue(needPlace);
 }
+
+/* ---------- 캡처 다듬기: 사진 부분 찾기 + 글자 읽기 ---------- */
+async function loadImg(blob){const u=URL.createObjectURL(blob);const im=new Image();im.src=u;await im.decode();return {im,u}}
+// 캡처에서 사진 영역 찾기: 배경색과 다른 픽셀이 줄 전체에 빽빽한 구간 = 사진
+async function detectPhoto(blob){try{const {im,u}=await loadImg(blob);const W0=im.naturalWidth,H0=im.naturalHeight;
+  const w=160,h=Math.max(1,Math.round(H0*w/W0));const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(im,0,0,w,h);URL.revokeObjectURL(u);
+  const d=x.getImageData(0,0,w,h).data;const px=(i,j)=>{const k=(j*w+i)*4;return [d[k],d[k+1],d[k+2]]};
+  // 배경색: 가장자리 픽셀 중 가장 흔한 색
+  const cnt={};for(let j=0;j<h;j+=2)for(const i of [1,w-2]){const q=px(i,j).map(v=>v>>4).join(',');cnt[q]=(cnt[q]||0)+1}
+  const bgk=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0][0].split(',').map(v=>(+v<<4)+8);
+  const diff=(a)=>Math.abs(a[0]-bgk[0])+Math.abs(a[1]-bgk[1])+Math.abs(a[2]-bgk[2]);
+  const rowF=[];for(let j=0;j<h;j++){let n=0;for(let i=0;i<w;i++)if(diff(px(i,j))>60)n++;rowF.push(n/w)}
+  // 가장 긴 '빽빽한' 구간 (작은 틈 허용)
+  let best=[0,0],st=-1,gap=0;for(let j=0;j<=h;j++){const on=j<h&&rowF[j]>.5;
+    if(on){if(st<0)st=j;gap=0}else if(st>=0){gap++;if(gap>2||j===h){const en=j-gap+1;if(en-st>best[1]-best[0])best=[st,en];st=-1;gap=0}}}
+  const [t,b]=best;if(b-t<h*.12)return {capture:false};
+  const colF=[];for(let i=0;i<w;i++){let n=0;for(let j=t;j<b;j++)if(diff(px(i,j))>60)n++;colF.push(n/(b-t))}
+  let l=0,r=w-1;while(l<r&&colF[l]<.5)l++;while(r>l&&colF[r]<.5)r--;
+  const box={x:l/w,y:t/h,w:(r-l+1)/w,h:(b-t)/h};
+  const area=box.w*box.h;const tall=H0/W0>1.6;
+  return {capture:area<.82&&(tall||area<.7),...box}}catch(e){return {capture:false}}}
+function clampBox(b){b.x=Math.max(0,Math.min(.95,b.x));b.y=Math.max(0,Math.min(.95,b.y));b.w=Math.max(.05,Math.min(1-b.x,b.w));b.h=Math.max(.05,Math.min(1-b.y,b.h));return b}
+function cropEditor(p,box0,isNew){return new Promise(async done=>{
+  const src=p.orig||p.photo;const {im,u}=await loadImg(src);
+  const box=clampBox({x:box0&&box0.x!=null?box0.x:0,y:box0&&box0.y!=null?box0.y:0,w:box0&&box0.w?box0.w:1,h:box0&&box0.h?box0.h:1});
+  const o=document.createElement('div');o.className='ov';o.style.alignItems='stretch';
+  o.innerHTML=`<div class="panel" style="max-height:100%;height:100%;border-radius:0;display:flex;flex-direction:column;padding-top:calc(env(safe-area-inset-top,0px) + 12px)">
+   <h2 style="margin-bottom:6px">캡처 다듬기<button class="x" id="cClose">${isNew?'원본 그대로':'닫기'}</button></h2>
+   <div class="note" style="margin-bottom:8px">파란 테두리 안만 사진으로 남겨요. 모서리나 변을 끌어서 맞추고, 바깥 글자는 메모로 옮겨요.</div>
+   <div id="cWrap" style="flex:1;min-height:0;position:relative;display:grid;place-items:center;touch-action:none;user-select:none;-webkit-user-select:none">
+     <div id="cStage" style="position:relative"><img src="${u}" style="display:block;max-width:100%;max-height:100%;pointer-events:none">
+     <div id="cBox" style="position:absolute;border:3px solid #1a73e8;box-shadow:0 0 0 9999px rgba(5,22,36,.55);pointer-events:none"></div></div></div>
+   <label class="note" style="display:flex;align-items:center;gap:8px;margin:10px 0 4px"><input type="checkbox" id="cOcr" checked style="width:18px;height:18px"> 바깥 글자 읽어서 메모에 넣기</label>
+   <div class="btns"><button class="btn" id="cAll">전체 선택</button><button class="btn pri" id="cOk">자르기</button></div></div>`;
+  document.body.appendChild(o);
+  const stage=o.querySelector('#cStage'),img=stage.querySelector('img'),bx=o.querySelector('#cBox'),wrap=o.querySelector('#cWrap');
+  const fit=()=>{const W=wrap.clientWidth,H=wrap.clientHeight,k=Math.min(W/im.naturalWidth,H/im.naturalHeight);img.style.width=im.naturalWidth*k+'px';img.style.height=im.naturalHeight*k+'px';draw()};
+  const draw=()=>{bx.style.left=box.x*100+'%';bx.style.top=box.y*100+'%';bx.style.width=box.w*100+'%';bx.style.height=box.h*100+'%'};
+  requestAnimationFrame(fit);
+  let drag=null;
+  wrap.addEventListener('pointerdown',e=>{const r=stage.getBoundingClientRect();const fx=(e.clientX-r.left)/r.width,fy=(e.clientY-r.top)/r.height;
+    const tx=28/r.width,ty=28/r.height;const L=Math.abs(fx-box.x)<tx,Rr=Math.abs(fx-(box.x+box.w))<tx,T=Math.abs(fy-box.y)<ty,B=Math.abs(fy-(box.y+box.h))<ty;
+    const inside=fx>box.x&&fx<box.x+box.w&&fy>box.y&&fy<box.y+box.h;
+    if(!(L||Rr||T||B||inside))return;drag={L,R:Rr,T,B,move:!(L||Rr||T||B),fx,fy,b:{...box},r};wrap.setPointerCapture(e.pointerId)});
+  wrap.addEventListener('pointermove',e=>{if(!drag)return;const r=drag.r;const dx=(e.clientX-r.left)/r.width-drag.fx,dy=(e.clientY-r.top)/r.height-drag.fy;const b=drag.b;
+    if(drag.move){box.x=Math.max(0,Math.min(1-b.w,b.x+dx));box.y=Math.max(0,Math.min(1-b.h,b.y+dy))}
+    else{if(drag.L){box.x=Math.min(b.x+b.w-.05,Math.max(0,b.x+dx));box.w=b.x+b.w-box.x}if(drag.R)box.w=Math.max(.05,Math.min(1-b.x,b.w+dx));
+      if(drag.T){box.y=Math.min(b.y+b.h-.05,Math.max(0,b.y+dy));box.h=b.y+b.h-box.y}if(drag.B)box.h=Math.max(.05,Math.min(1-b.y,b.h+dy))}draw()});
+  wrap.addEventListener('pointerup',()=>drag=null);
+  const close=()=>{o.remove();URL.revokeObjectURL(u);done()};
+  o.querySelector('#cClose').onclick=close;
+  o.querySelector('#cAll').onclick=()=>{Object.assign(box,{x:0,y:0,w:1,h:1});draw()};
+  o.querySelector('#cOk').onclick=async()=>{const W=im.naturalWidth,H=im.naturalHeight;const sx=Math.round(box.x*W),sy=Math.round(box.y*H),sw=Math.round(box.w*W),sh=Math.round(box.h*H);
+    const k=Math.min(1,1400/Math.max(sw,sh));const c=document.createElement('canvas');c.width=Math.round(sw*k);c.height=Math.round(sh*k);c.getContext('2d').drawImage(im,sx,sy,sw,sh,0,0,c.width,c.height);
+    const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.85));if(!p.orig)p.orig=src;p.photo=blob;p.crop={...box};
+    if(S.urls.has(p.id)){URL.revokeObjectURL(S.urls.get(p.id));S.urls.delete(p.id)}
+    await DB.put('points',p);renderAll();const doOcr=o.querySelector('#cOcr').checked;close();
+    if(doOcr)ocrInto(p,src,{...box});};
+})}
+let ocrWorker=null;
+async function ocrInto(p,src,box){toast('캡처 속 글자를 읽는 중… (처음엔 1분쯤 걸려요)',4000);
+  try{if(!window.Tesseract)await new Promise((res,rej)=>{const sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';sc.onload=res;sc.onerror=rej;document.head.appendChild(sc)});
+    if(!ocrWorker)ocrWorker=await Tesseract.createWorker(['kor','eng']);
+    const {im,u}=await loadImg(src);const W=im.naturalWidth,H=im.naturalHeight;
+    // 사진 부분은 하얗게 지우고 글자만 읽기
+    const k=Math.max(1,Math.min(2,1400/W));const c=document.createElement('canvas');c.width=W*k;c.height=H*k;const x=c.getContext('2d');x.drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);
+    x.fillStyle='#fff';x.fillRect(box.x*c.width,box.y*c.height,box.w*c.width,box.h*c.height);
+    const {data}=await ocrWorker.recognize(c);
+    const lines=(data.lines||[]).filter(l=>l.confidence>45).map(l=>l.text.trim()).filter(t=>t.replace(/[^가-힣A-Za-z0-9]/g,'').length>=2);
+    const txt=lines.join('\n').replace(/\n{3,}/g,'\n\n').trim();
+    if(!txt){toast('읽을 글자를 못 찾았어요');return}
+    p.note=(p.note?p.note+'\n':'')+txt;await DB.put('points',p);renderAll();toast('캡처 글자를 메모에 넣었어요. 틀린 글자는 편집에서 고쳐주세요',3500);
+  }catch(e){toast('글자 읽기에 실패했어요. 인터넷 연결을 확인해 주세요',3500)}}
+
 function placeQueue(list){if(!list.length)return;const p=list[0];const i=photos().indexOf(p);
   startPlacing(`${i+1}번 사진 위치: 지도를 탭하세요`,null,async ll=>{p.ll=ll;p.src='map';await DB.put('points',p);drawPoints();renderAll();placeQueue(list.slice(1))});}
 
 function editPhoto(p,justAdded){const ph=photos();const i=ph.indexOf(p);
   const o=sheet(`<h2>${i+1}번 경유지<button class="x" data-close>닫기</button></h2>
-   <img src="${blobUrl(p)}" alt="" style="width:100%;max-height:34vh;object-fit:cover;border-radius:12px;margin-bottom:10px">
+   <img src="${blobUrl(p)}" alt="" style="width:100%;max-height:34vh;object-fit:contain;background:#1b2d3a;border-radius:12px;margin-bottom:10px">
    <div class="field"><label for="pNote">메모 (갈림길·방향 등)</label><textarea id="pNote" placeholder="예: 약수터 지나 오른쪽 작은 길로">${esc(p.note)}</textarea></div>
    <div class="note" style="margin-bottom:8px">위치: ${p.ll?({exif:'사진에 저장된 GPS',gps:'찍을 때 내 위치',map:'지도에서 지정',me:'내 위치로 지정'}[p.src]||'지정됨'):'없음'}</div>
    <div class="btns"><button class="btn pri" id="pSave">저장</button></div>
    <div class="btns"><button class="btn" id="pUp"${i===0?' disabled':''}>순서 앞으로</button><button class="btn" id="pDown"${i===ph.length-1?' disabled':''}>순서 뒤로</button></div>
+   <div class="btns"><button class="btn" id="pCrop">캡처 다듬기 (자르기·글자 읽기)</button></div>
    <div class="btns"><button class="btn" id="pMap">지도에서 위치 다시 지정</button><button class="btn" id="pMe"${S.me?'':' disabled'}>지금 내 위치로</button></div>
    <div class="btns"><button class="btn dan" id="pDel">삭제</button></div>`);
   if(justAdded)setTimeout(()=>o.querySelector('#pNote').focus(),250);
   const save=async()=>{p.note=o.querySelector('#pNote').value.trim();await DB.put('points',p)};
   o.querySelector('#pSave').onclick=async()=>{await save();o.remove();renderAll();toast('저장했어요')};
   const swap=async d=>{await save();const q=ph[i+d];[p.order,q.order]=[q.order,p.order];await DB.put('points',p);await DB.put('points',q);S.sel=i+d;o.remove();drawPoints();renderAll();editPhoto(p)};
+  o.querySelector('#pCrop').onclick=async()=>{await save();o.remove();await cropEditor(p,p.crop||(p.orig?null:await detectPhoto(p.photo)),false);};
   o.querySelector('#pUp').onclick=()=>swap(-1);o.querySelector('#pDown').onclick=()=>swap(1);
   o.querySelector('#pMap').onclick=async()=>{await save();o.remove();startPlacing(`${i+1}번 사진 위치: 지도를 탭하세요`,p.ll,async ll=>{p.ll=ll;p.src='map';await DB.put('points',p);drawPoints();renderAll()})};
   o.querySelector('#pMe').onclick=async()=>{await save();p.ll=S.me.ll;p.src='me';await DB.put('points',p);o.remove();drawPoints();renderAll();toast('내 위치로 옮겼어요')};
@@ -547,12 +627,12 @@ function fitSide(){const sh=$('sheet');if(!$('app').classList.contains('side')){
   if(im&&im.naturalWidth){const h=$('cur').clientHeight-8;w=h*im.naturalWidth/im.naturalHeight+18}
   w=Math.round(Math.min(W*.66,Math.max(W*.42,w)));if(sh.style.width!==w+'px'){sh.style.width=w+'px';if(map)map.invalidateSize()}}
 window.addEventListener('resize',()=>{fitSide();map&&map.invalidateSize()});
-const SIZES=['side','mapbig','','photobig'];let sizeI=0;
-function setSize(i){sizeI=(i+4)%4;$('app').classList.remove('side','mapbig','photobig');if(SIZES[sizeI])$('app').classList.add(SIZES[sizeI]);try{localStorage.setItem('size',sizeI)}catch(e){}fitSide();setTimeout(()=>map&&map.invalidateSize(),230)}
-try{setSize(+(localStorage.getItem('size')??0))}catch(e){setSize(0)}
+const SIZES=['','photobig','mapbig'];let sizeI=0;
+function setSize(i){sizeI=(i+3)%3;$('app').classList.remove('side','mapbig','photobig');if(SIZES[sizeI])$('app').classList.add(SIZES[sizeI]);try{localStorage.setItem('size3',sizeI)}catch(e){}fitSide();setTimeout(()=>map&&map.invalidateSize(),230)}
+try{setSize(+(localStorage.getItem('size3')??0))}catch(e){setSize(0)}
 (function(){let y0=null;const g=$('grab');g.addEventListener('touchstart',e=>{y0=e.touches[0].clientY},{passive:true});
   g.addEventListener('touchend',e=>{if(y0==null)return;const dy=e.changedTouches[0].clientY-y0;y0=null;if(dy<-25)setSize(sizeI+1);else if(dy>25)setSize(sizeI-1)});
-  g.onclick=()=>setSize(sizeI===3?1:sizeI+1)})();
+  g.onclick=()=>setSize(sizeI+1)})();
 
 /* ---------- wire up ---------- */
 async function boot(){
@@ -572,7 +652,7 @@ $('infoBtn').onclick=()=>{if(!needCrag())openInfo()};$('menuBtn').onclick=openMe
 $('followBtn').onclick=()=>{S.follow=!S.follow;$('followBtn').classList.toggle('on',S.follow);if(S.follow){if(S.me)map.setView(S.me.ll,Math.max(map.getZoom(),17));else toast('위치를 찾는 중이에요');keepAwake(true);compassPerm()}else if(!S.rec)keepAwake(false)};
 $('fitBtn').onclick=()=>{S.follow=false;$('followBtn').classList.remove('on');fitAll()};
 $('layerBtn').onclick=()=>setLayer((S.layer+1)%LAYERS.length);
-$('sizeBtn').onclick=()=>{setSize(sizeI+1);toast(['나란히 보기','지도 크게','위아래 반반','사진 크게'][sizeI],1200)};
+$('sizeBtn').onclick=()=>{setSize(sizeI+1);toast(['위아래 반반','사진 크게','지도 크게'][sizeI],1200)};
 const needCrag=()=>{if(S.crag)return false;toast('먼저 암장을 추가하거나 가져와 주세요');openCrags();return true};
 $('addPhotoBtn').onclick=()=>{if(!needCrag())$('photoInput').click()};
 $('photoInput').onchange=e=>{const f=[...e.target.files];e.target.value='';if(f.length)addPhotos(f)};
