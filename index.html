@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>볼더 어프로치</title>
+<meta name="theme-color" content="#0B2E4A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="어프로치">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="lib/leaflet.css">
+<script src="lib/leaflet.js"></script>
+<style>
+@font-face{font-family:"Pretendard Variable";font-weight:45 920;font-style:normal;font-display:swap;src:url(lib/PretendardVariable.woff2) format("woff2-variations")}
+/* 한 화면: 위 지도(내 위치·볼더·경유지), 아래 사진 패널(가까운 경유지 자동 표시) */
+:root{
+  --navy:#0B2E4A; --teal:#0F6E7A; --aqua:#4FB3B8; --mist:#CFE8E6; --sand:#E9E2D0;
+  --bg:#fff; --fg:#0B2E4A; --muted:#5d7385; --line:#dfe9ea; --soft:#f3f8f8;
+  --danger:#c0392b; --me:#1a73e8;
+  --font:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+  --sheet:40%;
+  color-scheme:light;
+}
+[hidden]{display:none!important}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:13.5px;overflow:hidden;overscroll-behavior:none}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;padding:0}
+input,textarea,select{font:inherit;color:var(--fg)}
+#app{position:fixed;inset:0;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:8px;padding:calc(env(safe-area-inset-top,0px) + 8px) max(12px,env(safe-area-inset-right,0px)) 8px max(12px,env(safe-area-inset-left,0px));background:var(--navy);color:#fff;z-index:1000}
+#cragBtn{display:flex;align-items:center;gap:6px;min-width:0;flex:1;text-align:left}
+#cragBtn .nm{font-weight:800;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#cragBtn .rg{font-size:11px;padding:2px 7px;border-radius:99px;background:rgba(255,255,255,.14);white-space:nowrap}
+#cragBtn .rg:empty{display:none}
+#cragBtn .car{opacity:.7;font-size:11px}
+.hbtn{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(255,255,255,.1);flex:none}
+.hbtn svg{width:18px;height:18px;stroke:#fff}
+#mapWrap{position:relative;flex:1;min-height:0}
+#map{position:absolute;inset:0;background:#e8eef0}
+#sheet{flex:none;height:var(--sheet);min-height:180px;display:flex;flex-direction:column;background:var(--bg);border-top:1px solid var(--line);box-shadow:0 -6px 18px rgba(11,46,74,.08);z-index:900;padding-bottom:env(safe-area-inset-bottom,0px);transition:height .2s}
+#app.mapbig{--sheet:30%}
+#app.photobig{--sheet:58%}
+/* map overlays */
+.mapctl{position:absolute;right:max(10px,env(safe-area-inset-right,0px));top:10px;display:flex;flex-direction:column;gap:8px;z-index:800}
+.mbtn{width:40px;height:40px;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(11,46,74,.2);display:grid;place-items:center;font-weight:800;font-size:11px;color:var(--navy)}
+.mbtn svg{width:20px;height:20px;stroke:var(--navy);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.mbtn.on{background:var(--teal);color:#fff}.mbtn.on svg{stroke:#fff}
+#status{position:absolute;left:max(10px,env(safe-area-inset-left,0px));top:10px;right:62px;z-index:800;display:flex;flex-wrap:wrap;gap:6px;pointer-events:none}
+.pill{pointer-events:auto;display:inline-flex;align-items:center;gap:6px;background:#fff;border-radius:99px;padding:6px 11px;box-shadow:0 2px 8px rgba(11,46,74,.18);font-weight:700;font-size:12.5px;white-space:nowrap}
+.pill .arr{display:inline-block;width:16px;height:16px;border-radius:50%;background:var(--teal);color:#fff;font-size:10px;line-height:16px;text-align:center}
+.pill.warn{background:#fff4e5;color:#8a4b00}
+.pill.rec{background:var(--danger);color:#fff}
+.pill.gps .dot{width:8px;height:8px;border-radius:50%;background:#9aa}
+.pill.gps.ok .dot{background:#2ecc71}
+#placeBar{position:absolute;left:10px;right:10px;bottom:10px;z-index:850;background:var(--navy);color:#fff;border-radius:14px;padding:10px 12px;display:flex;align-items:center;gap:10px;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+#placeBar .t{flex:1;font-weight:700;font-size:13px}
+#placeBar button{background:rgba(255,255,255,.15);padding:7px 11px;border-radius:9px;font-weight:700;font-size:12.5px}
+#placeBar .ok{background:var(--aqua);color:var(--navy)}
+/* sheet */
+.grab{height:16px;display:grid;place-items:center;flex:none;cursor:ns-resize}
+.grab i{width:36px;height:4px;border-radius:4px;background:var(--line)}
+#cur{flex:1;min-height:0;display:flex;gap:10px;padding:0 max(12px,env(safe-area-inset-right,0px)) 8px max(12px,env(safe-area-inset-left,0px))}
+#curImg{position:relative;overflow-y:auto!important;flex:1;min-width:0;border-radius:14px;overflow:hidden;background:var(--soft);display:grid;place-items:center}
+#curImg img{width:100%;height:100%;object-fit:cover;display:block}
+#curImg .no{position:absolute;left:8px;top:8px;background:var(--navy);color:#fff;font-weight:800;border-radius:9px;padding:3px 8px;font-size:12px}
+#curImg .auto{position:absolute;right:8px;top:8px;background:rgba(255,255,255,.92);color:var(--teal);font-weight:800;border-radius:9px;padding:3px 8px;font-size:11px}
+#curImg .auto.off{color:var(--muted)}
+#curImg .cap{position:absolute;left:0;right:0;bottom:0;padding:22px 10px 8px;background:linear-gradient(transparent,rgba(5,22,36,.78));color:#fff;font-size:13px;font-weight:600;line-height:1.35}
+#curImg .cap .d{font-size:11.5px;opacity:.85;font-weight:500}
+#curImg .nav{position:absolute;top:50%;transform:translateY(-50%);width:32px;height:44px;border-radius:10px;background:rgba(255,255,255,.75);display:grid;place-items:center;font-size:18px;font-weight:800;color:var(--navy)}
+#curImg .nav.p{left:6px}#curImg .nav.n{right:6px}
+.empty{padding:14px;text-align:center;color:var(--muted);line-height:1.6;font-size:13px}
+.empty b{color:var(--navy)}
+#strip{flex:none;display:flex;gap:6px;overflow-x:auto;padding:0 max(12px,env(safe-area-inset-right,0px)) 8px max(12px,env(safe-area-inset-left,0px));scrollbar-width:none}
+#strip::-webkit-scrollbar{display:none}
+.th{position:relative;flex:none;width:54px;height:54px;border-radius:10px;overflow:hidden;background:var(--soft);border:2px solid transparent}
+.th img{width:100%;height:100%;object-fit:cover}
+.th span{position:absolute;left:3px;top:3px;background:var(--navy);color:#fff;border-radius:6px;font-size:10px;font-weight:800;padding:0 4px;line-height:15px}
+.th.sel{border-color:var(--teal)}
+.th.near::after{content:"";position:absolute;right:4px;bottom:4px;width:9px;height:9px;border-radius:50%;background:var(--me);border:2px solid #fff}
+.th.add{display:grid;place-items:center;color:var(--teal);font-size:22px;font-weight:600;border:1.5px dashed var(--aqua);background:#fff}
+#actions{flex:none;display:flex;gap:6px;padding:0 max(12px,env(safe-area-inset-right,0px)) 8px max(12px,env(safe-area-inset-left,0px))}
+.act{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;height:40px;border-radius:12px;background:var(--soft);font-weight:700;font-size:12.5px;color:var(--navy)}
+.act svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.act.pri{background:var(--teal);color:#fff}
+.act.rec{background:var(--danger);color:#fff}
+/* overlays */
+.ov{position:fixed;inset:0;z-index:2000;background:rgba(5,22,36,.45);display:flex;align-items:flex-end}
+.panel{width:100%;max-height:88%;overflow:auto;background:#fff;border-radius:18px 18px 0 0;padding:16px max(16px,env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.panel h2{margin:0 0 12px;font-size:17px;font-weight:800;display:flex;align-items:center;gap:8px}
+.panel h2 .x{margin-left:auto;font-size:13px;color:var(--muted);font-weight:600}
+.panel h3{font-size:12px;color:var(--muted);margin:16px 0 6px;font-weight:700;letter-spacing:.02em}
+.row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--soft);margin-bottom:6px;width:100%;text-align:left}
+.row .nm{font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .meta{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.row.sel{background:var(--mist)}
+.badge{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:99px;border:1px solid var(--aqua);color:var(--teal);background:#fff;white-space:nowrap}
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}
+.field label{font-size:12px;font-weight:700;color:var(--muted)}
+.field input,.field textarea,.field select{border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:#fff;font-size:15px}
+.field textarea{min-height:64px;resize:vertical}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.btn{flex:1;min-width:120px;height:42px;border-radius:12px;background:var(--soft);font-weight:700;color:var(--navy);padding:0 12px}
+.btn.pri{background:var(--teal);color:#fff}
+.btn.dan{background:#fdecea;color:var(--danger)}
+.btn.dan.arm{background:var(--danger);color:#fff}
+.note{font-size:12px;color:var(--muted);line-height:1.55}
+.way{background:var(--sand);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.5;margin-bottom:10px}
+#viewer{position:fixed;inset:0;z-index:3000;background:#000;display:flex;flex-direction:column}
+#viewer .vimg{flex:1;min-height:0;overflow:auto;display:grid;place-items:center;touch-action:pan-x pan-y pinch-zoom}
+#viewer img{max-width:100%;max-height:100%;object-fit:contain}
+#viewer img.z{max-width:none;max-height:none;width:220%}
+#viewer .vbar{display:flex;align-items:center;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));color:#fff}
+#viewer .vbar .t{flex:1;font-size:13.5px;line-height:1.4}
+#viewer .vtop{position:absolute;top:calc(env(safe-area-inset-top,0px) + 8px);right:10px;display:flex;gap:8px}
+#viewer .vtop button{background:rgba(255,255,255,.18);color:#fff;border-radius:10px;padding:8px 12px;font-weight:700}
+#toast{position:fixed;left:50%;bottom:calc(var(--sheet) + 14px);transform:translateX(-50%);background:var(--navy);color:#fff;padding:9px 14px;border-radius:12px;font-weight:600;font-size:13px;z-index:4000;max-width:90%;text-align:center;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+/* markers */
+.mk{display:grid;place-items:center;font-weight:800;color:#fff;font-family:var(--font)}
+.mk-ph{width:26px;height:26px;border-radius:50%;background:var(--navy);border:2.5px solid #fff;font-size:11.5px;box-shadow:0 1px 5px rgba(0,0,0,.35)}
+.mk-ph.sel{background:var(--teal);transform:scale(1.25)}
+.mk-bd{width:30px;height:30px;border-radius:9px 9px 9px 2px;background:var(--teal);border:2.5px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.35);font-size:14px}
+.mk-bd.tgt{background:#e67e22}
+.mk-pk{width:26px;height:26px;border-radius:7px;background:#2c6fbb;border:2.5px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.35);font-size:13px}
+.mk-lbl{position:absolute;left:34px;top:5px;white-space:nowrap;background:rgba(255,255,255,.92);color:var(--navy);font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px;pointer-events:none}
+.me{position:relative;width:20px;height:20px}
+.me .c{position:absolute;inset:2px;border-radius:50%;background:var(--me);border:3px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.15),0 1px 6px rgba(0,0,0,.35)}
+.me .h{position:absolute;left:50%;top:-14px;width:0;height:0;margin-left:-7px;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:16px solid rgba(26,115,232,.55);transform-origin:7px 24px}
+.leaflet-container{font-family:var(--font)}
+.leaflet-control-attribution{font-size:9px}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <button id="cragBtn" aria-label="암장 선택"><span class="nm" id="cragName">암장 선택</span><span class="rg" id="cragRegion"></span><span class="car">▼</span></button>
+    <button class="hbtn" id="infoBtn" aria-label="암장 정보"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg></button>
+    <button class="hbtn" id="menuBtn" aria-label="메뉴"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button>
+  </header>
+  <div id="mapWrap">
+    <div id="map"></div>
+    <div id="status"></div>
+    <div class="mapctl">
+      <button class="mbtn" id="followBtn" aria-label="내 위치 따라가기"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="7.5"/></svg></button>
+      <button class="mbtn" id="fitBtn" aria-label="전체 보기"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      <button class="mbtn" id="layerBtn" aria-label="지도 종류">일반</button>
+      <button class="mbtn" id="sizeBtn" aria-label="사진 크기"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M4 14h16"/></svg></button>
+    </div>
+    <div id="placeBar" hidden><span class="t" id="placeTxt"></span><button id="placeCancel">취소</button><button class="ok" id="placeOk" hidden>여기로</button></div>
+  </div>
+  <div id="sheet">
+    <div class="grab" id="grab"><i></i></div>
+    <div id="cur"></div>
+    <div id="strip"></div>
+    <div id="actions">
+      <button class="act pri" id="addPhotoBtn"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>사진 경유지</button>
+      <button class="act" id="addSpotBtn"><svg viewBox="0 0 24 24"><path d="M6 21V4M6 4h11l-2.5 4L17 12H6"/></svg>위치 표시</button>
+      <button class="act" id="recBtn"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/></svg><span>길 기록</span></button>
+    </div>
+  </div>
+</div>
+<input type="file" id="photoInput" accept="image/*" multiple hidden>
+<input type="file" id="importInput" accept="application/json,.json" hidden>
+<div id="toast" hidden></div>
+
+<script>
+'use strict';
+/* ---------- seed: 등반기록 앱의 볼더링 암장 ---------- */
+const SEED = []; // 개인 암장 목록은 코드에 넣지 않고, 파일 가져오기로 넣어요
+const REGION_ORDER=["서울/경기","강원","충북","충남","전북","전남","경북","경남","제주","해외"];
+
+/* ---------- IndexedDB ---------- */
+const DB={db:null,
+  open(){return new Promise((res,rej)=>{const r=indexedDB.open('boulder-approach',1);
+    r.onupgradeneeded=()=>{const d=r.result;d.createObjectStore('crags',{keyPath:'id'});const p=d.createObjectStore('points',{keyPath:'id'});p.createIndex('crag','crag');const t=d.createObjectStore('tracks',{keyPath:'id'});t.createIndex('crag','crag');d.createObjectStore('meta',{keyPath:'k'});};
+    r.onsuccess=()=>{this.db=r.result;res()};r.onerror=()=>rej(r.error);});},
+  tx(st,mode='readonly'){return this.db.transaction(st,mode).objectStore(st)},
+  req(r){return new Promise((res,rej)=>{r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})},
+  all(st){return this.req(this.tx(st).getAll())},
+  byCrag(st,c){return this.req(this.tx(st).index('crag').getAll(c))},
+  put(st,v){return this.req(this.tx(st,'readwrite').put(v))},
+  del(st,k){return this.req(this.tx(st,'readwrite').delete(k))},
+  get(st,k){return this.req(this.tx(st).get(k))}
+};
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+
+/* ---------- state ---------- */
+const S={crags:[],crag:null,points:[],tracks:[],me:null,heading:null,follow:false,sel:0,auto:true,
+  layer:0,target:null,rec:null,placing:null,urls:new Map(),wake:null,first:true};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(t,ms=2200){const el=$('toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>el.hidden=true,ms)}
+
+/* ---------- geo math ---------- */
+const R=6371000,rad=d=>d*Math.PI/180;
+function dist(a,b){const dLa=rad(b[0]-a[0]),dLo=rad(b[1]-a[1]);const x=Math.sin(dLa/2)**2+Math.cos(rad(a[0]))*Math.cos(rad(b[0]))*Math.sin(dLo/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+function bearing(a,b){const y=Math.sin(rad(b[1]-a[1]))*Math.cos(rad(b[0]));const x=Math.cos(rad(a[0]))*Math.sin(rad(b[0]))-Math.sin(rad(a[0]))*Math.cos(rad(b[0]))*Math.cos(rad(b[1]-a[1]));return (Math.atan2(y,x)*180/Math.PI+360)%360}
+const DIRS=['북','북동','동','남동','남','남서','서','북서'];
+const dirName=b=>DIRS[Math.round(b/45)%8];
+const fmtD=m=>m<1000?Math.round(m)+'m':(m/1000).toFixed(m<10000?2:1)+'km';
+
+/* ---------- EXIF (JPEG) ---------- */
+async function readExif(file){
+  try{const buf=await file.slice(0,262144).arrayBuffer();const v=new DataView(buf);
+    if(v.getUint16(0)!==0xFFD8)return {};let o=2;
+    while(o<v.byteLength-4){const m=v.getUint16(o);const len=v.getUint16(o+2);
+      if(m===0xFFE1&&v.getUint32(o+4)===0x45786966){return parseTiff(v,o+10)}
+      if((m&0xFF00)!==0xFF00)break;o+=2+len;}
+  }catch(e){}return {};
+}
+function parseTiff(v,t){const le=v.getUint16(t)===0x4949;const u16=p=>v.getUint16(p,le),u32=p=>v.getUint32(p,le);
+  const ifd=(p)=>{const n=u16(p);const e={};for(let i=0;i<n;i++){const q=p+2+i*12;e[u16(q)]={type:u16(q+2),count:u32(q+4),off:q+8}}return e};
+  const rat=(p,i)=>{const a=t+u32(p);return u32(a+i*8)/u32(a+i*8+4)};
+  const asc=(en)=>{const p=en.count>4?t+u32(en.off):en.off;let s='';for(let i=0;i<en.count-1;i++)s+=String.fromCharCode(v.getUint8(p+i));return s};
+  const out={};const i0=ifd(t+u32(t+4));
+  if(i0[0x8769]){const ex=ifd(t+u32(i0[0x8769].off));if(ex[0x9003]){const s=asc(ex[0x9003]);const m=s.match(/(\d+):(\d+):(\d+) (\d+):(\d+):(\d+)/);if(m)out.time=new Date(+m[1],m[2]-1,+m[3],+m[4],+m[5],+m[6]).getTime()}}
+  if(i0[0x8825]){const g=ifd(t+u32(i0[0x8825].off));
+    if(g[2]&&g[4]){const dms=en=>rat(en.off,0)+rat(en.off,1)/60+rat(en.off,2)/3600;
+      let la=dms(g[2]),lo=dms(g[4]);if(g[1]&&String.fromCharCode(v.getUint8(g[1].off))==='S')la=-la;if(g[3]&&String.fromCharCode(v.getUint8(g[3].off))==='W')lo=-lo;
+      if(isFinite(la)&&isFinite(lo)&&(la||lo))out.ll=[la,lo];}}
+  return out}
+async function shrink(file,max=1400){
+  const url=URL.createObjectURL(file);try{const img=new Image();img.src=url;await img.decode();
+    let w=img.naturalWidth,h=img.naturalHeight;const k=Math.min(1,max/Math.max(w,h));w=Math.round(w*k);h=Math.round(h*k);
+    const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
+    return await new Promise(r=>c.toBlob(r,'image/jpeg',.82));}finally{URL.revokeObjectURL(url)}}
+function blobUrl(p){if(!p.photo)return '';if(!S.urls.has(p.id))S.urls.set(p.id,URL.createObjectURL(p.photo));return S.urls.get(p.id)}
+
+/* ---------- map ---------- */
+const LAYERS=[
+ {n:'일반',url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',o:{maxNativeZoom:19,attribution:'© OpenStreetMap'}},
+ {n:'지형',url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',o:{maxNativeZoom:17,subdomains:'abc',attribution:'© OpenTopoMap © OSM'}},
+ {n:'위성',url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',o:{maxNativeZoom:19,attribution:'© Esri'}}];
+let map,tile,G={};
+function initMap(){
+  map=L.map('map',{zoomControl:false,attributionControl:true,maxZoom:20}).setView([37.45,127.0],11);
+  setLayer(+(localStorage.getItem('layer')||0));
+  G.track=L.layerGroup().addTo(map);G.line=L.layerGroup().addTo(map);G.pts=L.layerGroup().addTo(map);G.me=L.layerGroup().addTo(map);
+  map.on('dragstart',()=>{if(S.follow){S.follow=false;$('followBtn').classList.remove('on')}});
+  map.on('click',e=>{if(S.placing){setPlacePos([e.latlng.lat,e.latlng.lng])}});
+  L.control.scale({imperial:false,position:'bottomleft'}).addTo(map);
+}
+function setLayer(i){S.layer=i;if(tile)map.removeLayer(tile);const l=LAYERS[i];tile=L.tileLayer(l.url,{...l.o,maxZoom:20}).addTo(map);$('layerBtn').textContent=l.n;try{localStorage.setItem('layer',i)}catch(e){}}
+const photos=()=>S.points.filter(p=>p.kind==='photo').sort((a,b)=>a.order-b.order);
+const spots=()=>S.points.filter(p=>p.kind!=='photo');
+
+function drawPoints(){
+  G.pts.clearLayers();G.line.clearLayers();G.track.clearLayers();
+  const ph=photos();
+  for(const t of S.tracks){if(t.pts.length>1)L.polyline(t.pts,{color:'#0F6E7A',weight:5,opacity:.75}).addTo(G.track)}
+  const ll=ph.filter(p=>p.ll).map(p=>p.ll);
+  if(ll.length>1&&!S.tracks.some(t=>t.pts.length>1))L.polyline(ll,{color:'#0B2E4A',weight:3,dashArray:'6 7',opacity:.7}).addTo(G.line);
+  ph.forEach((p,i)=>{if(!p.ll)return;
+    const m=L.marker(p.ll,{icon:L.divIcon({className:'',html:`<div class="mk mk-ph${i===S.sel?' sel':''}">${i+1}</div>`,iconSize:[26,26],iconAnchor:[13,13]}),zIndexOffset:i===S.sel?500:0});
+    m.on('click',()=>{S.auto=false;select(i,true)});m.addTo(G.pts)});
+  for(const p of spots()){if(!p.ll)continue;const bd=p.kind==='boulder';const tgt=S.target===p.id;
+    const html=bd?`<div class="mk mk-bd${tgt?' tgt':''}">◆</div><div class="mk-lbl">${esc(p.name||'볼더')}</div>`:`<div class="mk mk-pk">P</div>`;
+    const m=L.marker(p.ll,{icon:L.divIcon({className:'',html,iconSize:bd?[30,30]:[26,26],iconAnchor:bd?[4,30]:[13,13]}),zIndexOffset:bd?300:100});
+    m.on('click',()=>openSpot(p));m.addTo(G.pts)}
+}
+function fitAll(anim=true){const b=[];S.points.forEach(p=>p.ll&&b.push(p.ll));S.tracks.forEach(t=>t.pts.forEach(q=>b.push(q)));
+  if(S.me&&b.length&&dist(S.me.ll,b[0])<20000)b.push(S.me.ll);
+  if(b.length>1)map.fitBounds(b,{padding:[40,40],maxZoom:18,animate:anim});else if(b.length)map.setView(b[0],17,{animate:anim});
+  else if(S.crag&&S.crag.center)map.setView(S.crag.center,16,{animate:anim});else if(S.me)map.setView(S.me.ll,16,{animate:anim});}
+
+/* ---------- my location ---------- */
+let meMarker,accCircle;
+function startGeo(){
+  if(!('geolocation' in navigator)){S.geoErr='이 브라우저는 위치를 지원하지 않아요';renderStatus();return}
+  navigator.geolocation.watchPosition(pos=>{const c=pos.coords;S.geoErr=null;
+    S.me={ll:[c.latitude,c.longitude],acc:c.accuracy,t:pos.timestamp};
+    if(c.heading!=null&&!isNaN(c.heading)&&c.speed>0.5)S.heading=c.heading;
+    drawMe();onMove();},err=>{S.geoErr=err.code===1?'위치 권한이 꺼져 있어요':'위치를 찾는 중…';renderStatus()},{enableHighAccuracy:true,maximumAge:2000,timeout:20000});
+  if(window.DeviceOrientationEvent&&typeof DeviceOrientationEvent.requestPermission!=='function'){
+    window.addEventListener('deviceorientationabsolute',e=>{if(e.alpha!=null){S.heading=(360-e.alpha)%360;drawMe()}},true);}
+}
+function drawMe(){if(!S.me)return;const ll=S.me.ll;
+  const html=`<div class="me">${S.heading!=null?`<div class="h" style="transform:rotate(${S.heading}deg)"></div>`:''}<div class="c"></div></div>`;
+  if(!meMarker){meMarker=L.marker(ll,{icon:L.divIcon({className:'',html,iconSize:[20,20],iconAnchor:[10,10]}),interactive:false,zIndexOffset:1000}).addTo(G.me);
+    accCircle=L.circle(ll,{radius:S.me.acc,color:'#1a73e8',weight:1,fillOpacity:.1,interactive:false}).addTo(G.me);}
+  else{meMarker.setLatLng(ll);meMarker.setIcon(L.divIcon({className:'',html,iconSize:[20,20],iconAnchor:[10,10]}));accCircle.setLatLng(ll).setRadius(S.me.acc)}}
+async function compassPerm(){try{if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){
+  const r=await DeviceOrientationEvent.requestPermission();if(r==='granted'&&!compassPerm.on){compassPerm.on=1;
+  window.addEventListener('deviceorientation',e=>{if(e.webkitCompassHeading!=null){S.heading=e.webkitCompassHeading;drawMe()}},true)}}}catch(e){}}
+function onMove(){
+  if(S.follow)map.setView(S.me.ll,Math.max(map.getZoom(),17),{animate:true});
+  if(S.first&&S.me){S.first=false;if(!S.points.some(p=>p.ll)&&!(S.crag&&S.crag.center))map.setView(S.me.ll,16)}
+  if(S.rec)recPoint();
+  const ph=photos();
+  if(ph.length){let best=-1,bd=1e12;ph.forEach((p,i)=>{if(!p.ll)return;const d=dist(S.me.ll,p.ll);if(d<bd){bd=d;best=i}});
+    S.near=best;if(S.auto&&best>=0&&best!==S.sel)select(best,false);else{renderStrip(false);renderCur()}}
+  renderStatus();
+}
+
+/* ---------- crag ---------- */
+async function loadCrag(id){
+  const c=S.crags.find(x=>x.id===id)||S.crags[0];
+  if(!c){S.crag=null;S.points=[];S.tracks=[];$('cragName').textContent='암장 추가하기';$('cragRegion').textContent='';drawPoints();renderAll();return}S.crag=c;try{localStorage.setItem('crag',c.id)}catch(e){}
+  for(const u of S.urls.values())URL.revokeObjectURL(u);S.urls.clear();
+  S.points=await DB.byCrag('points',c.id);S.tracks=await DB.byCrag('tracks',c.id);
+  S.sel=0;S.auto=true;S.target=(spots().find(p=>p.kind==='boulder')||{}).id||null;
+  $('cragName').textContent=c.name;$('cragRegion').textContent=c.region||'';
+  drawPoints();renderAll();fitAll(false);
+}
+function renderAll(){renderCur();renderStrip(true);renderStatus()}
+
+function renderStatus(){const el=$('status');let h='';
+  h+=`<span class="pill gps${S.me?' ok':''}"><span class="dot"></span>${S.geoErr?esc(S.geoErr):S.me?'GPS ±'+Math.round(S.me.acc)+'m':'위치 찾는 중…'}</span>`;
+  if(S.rec)h+=`<span class="pill rec">● 기록 중 ${fmtD(trackLen(S.rec.pts))}</span>`;
+  const t=S.points.find(p=>p.id===S.target);
+  if(t&&t.ll&&S.me){const d=dist(S.me.ll,t.ll),b=bearing(S.me.ll,t.ll);
+    h+=`<span class="pill"><span class="arr" style="transform:rotate(${b}deg)">↑</span>${esc(t.name||'볼더')}까지 ${fmtD(d)} · ${dirName(b)}</span>`;}
+  if(S.placing)h='';
+  el.innerHTML=h;}
+
+function renderCur(){const el=$('cur');const ph=photos();
+  if(!S.crag){el.innerHTML=`<div id="curImg"><div class="empty"><b>암장을 먼저 골라주세요.</b><br>위쪽 이름을 눌러 새 암장을 추가하거나<br>암장 목록 파일을 가져올 수 있어요.</div></div>`;return}
+  if(!ph.length){const c=S.crag||{};el.innerHTML=`<div id="curImg" style="background:var(--soft)"><div class="empty">
+    ${c.wayNote?`<div class="way" style="text-align:left">${esc(c.wayNote)}</div>`:''}
+    <b>아직 사진 경유지가 없어요.</b><br>주차장에서 출발해 갈림길·이정표·특징 있는 바위를<br>찍어 <b>사진 경유지</b>로 남겨두면 다음에 이 화면에서<br>가까운 사진이 자동으로 떠요.</div></div>`;return}
+  if(S.sel>=ph.length)S.sel=ph.length-1;const p=ph[S.sel];
+  let d='';if(S.me&&p.ll){const m=dist(S.me.ll,p.ll);d=`${fmtD(m)} · ${dirName(bearing(S.me.ll,p.ll))}쪽`}
+  else if(!p.ll)d='위치 없음';
+  el.innerHTML=`<div id="curImg"><img src="${blobUrl(p)}" alt="">
+    <span class="no">${S.sel+1} / ${ph.length}</span>
+    <button class="auto${S.auto?'':' off'}" id="autoBtn">${S.auto?'자동 따라가기':'자동 꺼짐 · 켜기'}</button>
+    ${S.sel>0?'<button class="nav p" id="prevBtn">‹</button>':''}${S.sel<ph.length-1?'<button class="nav n" id="nextBtn">›</button>':''}
+    <div class="cap">${esc(p.note||'메모 없음')}<div class="d">${d}</div></div></div>`;
+  $('curImg').querySelector('img').onclick=()=>openViewer();
+  $('autoBtn').onclick=e=>{e.stopPropagation();S.auto=!S.auto;if(S.auto&&S.near>=0)select(S.near,true);else renderCur()};
+  const pb=$('prevBtn'),nb=$('nextBtn');if(pb)pb.onclick=()=>{S.auto=false;select(S.sel-1,true)};if(nb)nb.onclick=()=>{S.auto=false;select(S.sel+1,true)};
+}
+function renderStrip(scroll){const el=$('strip');const ph=photos();
+  el.innerHTML=ph.map((p,i)=>`<button class="th${i===S.sel?' sel':''}${i===S.near&&S.me?' near':''}" data-i="${i}"><img src="${blobUrl(p)}" alt="" loading="lazy"><span>${i+1}</span></button>`).join('')+`<button class="th add" id="stripAdd" aria-label="사진 추가">+</button>`;
+  el.querySelectorAll('.th[data-i]').forEach(b=>b.onclick=()=>{S.auto=false;select(+b.dataset.i,true)});
+  $('stripAdd').onclick=()=>$('photoInput').click();
+  if(scroll){const s=el.querySelector('.sel');if(s)s.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'})}}
+function select(i,pan){S.sel=i;renderCur();renderStrip(true);drawPoints();
+  const p=photos()[i];if(pan&&p&&p.ll&&!S.follow)map.panTo(p.ll);}
+
+/* ---------- photo viewer ---------- */
+function openViewer(){const ph=photos();const p=ph[S.sel];if(!p)return;
+  const v=document.createElement('div');v.id='viewer';
+  v.innerHTML=`<div class="vimg"><img src="${blobUrl(p)}" alt=""></div>
+   <div class="vtop"><button id="vEdit">편집</button><button id="vClose">닫기</button></div>
+   <div class="vbar"><div class="t"><b>${S.sel+1}번</b> · ${esc(p.note||'메모 없음')}</div></div>`;
+  document.body.appendChild(v);
+  v.querySelector('img').onclick=e=>e.target.classList.toggle('z');
+  $('vClose').onclick=()=>v.remove();$('vEdit').onclick=()=>{v.remove();editPhoto(p)};}
+
+/* ---------- overlays ---------- */
+function sheet(html){const o=document.createElement('div');o.className='ov';o.innerHTML=`<div class="panel">${html}</div>`;
+  o.addEventListener('click',e=>{if(e.target===o)o.remove()});document.body.appendChild(o);
+  o.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>o.remove());return o}
+function armDelete(btn,fn){btn.onclick=()=>{if(btn.classList.contains('arm'))fn();else{btn.classList.add('arm');btn.textContent='한 번 더 누르면 삭제';setTimeout(()=>{btn.classList.remove('arm');btn.textContent='삭제'},3000)}}}
+
+function openCrags(){
+  const groups={};for(const c of S.crags){(groups[c.region||'기타']=groups[c.region||'기타']||[]).push(c)}
+  const keys=Object.keys(groups).sort((a,b)=>(REGION_ORDER.indexOf(a)+99)%99-(REGION_ORDER.indexOf(b)+99)%99);
+  const o=sheet(`<h2>암장 선택<button class="x" data-close>닫기</button></h2>
+    ${keys.map(k=>`<h3>${esc(k)}</h3>`+groups[k].map(c=>`<button class="row${S.crag&&c.id===S.crag.id?' sel':''}" data-id="${c.id}"><span class="nm">${esc(c.name)}</span><span class="meta">${c.nPh?`사진 ${c.nPh}`:''}${c.nSp?` · 위치 ${c.nSp}`:''}</span><span class="badge">${c.approachMin!=null?'어프로치 '+c.approachMin+'분':'볼더링'}</span></button>`).join('')).join('')}
+    ${S.crags.length?'':'<div class="note" style="margin-bottom:8px">아직 암장이 없어요. 새로 추가하거나, 받은 암장 목록 파일(.json)을 가져오세요.</div>'}
+    <div class="btns"><button class="btn pri" id="newCrag">+ 새 암장</button><button class="btn" id="impCrag">파일 가져오기</button></div>`);
+  o.querySelector('#impCrag').onclick=()=>{o.remove();$('importInput').click()};
+  o.querySelectorAll('.row').forEach(b=>b.onclick=()=>{o.remove();loadCrag(b.dataset.id)});
+  o.querySelector('#newCrag').onclick=()=>{o.remove();editCrag(null)};
+}
+async function countCrags(){const pts=await DB.all('points');for(const c of S.crags){c.nPh=pts.filter(p=>p.crag===c.id&&p.kind==='photo').length;c.nSp=pts.filter(p=>p.crag===c.id&&p.kind!=='photo').length}}
+
+function openInfo(){const c=S.crag;if(!c)return;
+  const o=sheet(`<h2>${esc(c.name)}<span class="badge">${esc(c.region||'')}</span><button class="x" data-close>닫기</button></h2>
+   ${c.wayNote?`<div class="way">${esc(c.wayNote)}</div>`:''}
+   <div class="note">어프로치 ${c.approachMin??'?'}분 · 주차 ${esc(c.parking||'정보 없음')}</div>
+   <div class="btns">${c.parkingUrl?`<a class="btn pri" style="display:grid;place-items:center;text-decoration:none" href="${esc(c.parkingUrl)}" target="_blank" rel="noopener">주차장 길찾기 (지도앱)</a>`:''}
+   <button class="btn" id="editCragB">암장 정보 수정</button></div>
+   <h3>길 기록 (${S.tracks.length})</h3>
+   ${S.tracks.length?S.tracks.map(t=>`<div class="row"><span class="nm">${new Date(t.date).toLocaleDateString('ko-KR')} 기록</span><span class="meta">${fmtD(trackLen(t.pts))}</span><button class="btn dan" style="flex:none;min-width:0;height:32px" data-t="${t.id}">삭제</button></div>`).join(''):'<div class="note">아직 없어요. 아래 <b>길 기록</b>을 누르고 걸으면 지나간 길이 선으로 남아요.</div>'}`);
+  o.querySelector('#editCragB').onclick=()=>{o.remove();editCrag(c)};
+  o.querySelectorAll('[data-t]').forEach(b=>armDelete(b,async()=>{await DB.del('tracks',b.dataset.t);S.tracks=S.tracks.filter(t=>t.id!==b.dataset.t);drawPoints();o.remove();toast('길 기록을 지웠어요')}));}
+
+function editCrag(c){const isNew=!c;c=c||{id:'u'+uid(),name:'',region:'서울/경기',approachMin:null,parkingUrl:'',parking:'',wayNote:''};
+  const o=sheet(`<h2>${isNew?'새 암장':'암장 정보 수정'}<button class="x" data-close>닫기</button></h2>
+   <div class="field"><label for="fName">이름</label><input id="fName" value="${esc(c.name)}"></div>
+   <div class="field"><label for="fRegion">지역</label><select id="fRegion">${REGION_ORDER.map(r=>`<option${r===c.region?' selected':''}>${r}</option>`).join('')}</select></div>
+   <div class="field"><label for="fMin">어프로치 (분)</label><input id="fMin" type="number" inputmode="numeric" value="${c.approachMin??''}"></div>
+   <div class="field"><label for="fUrl">주차장 지도 링크</label><input id="fUrl" value="${esc(c.parkingUrl)}" placeholder="https://naver.me/..."></div>
+   <div class="field"><label for="fWay">가는 길 메모</label><textarea id="fWay">${esc(c.wayNote)}</textarea></div>
+   <div class="btns"><button class="btn pri" id="fSave">저장</button>${isNew?'':'<button class="btn dan" id="fDel">삭제</button>'}</div>`);
+  o.querySelector('#fSave').onclick=async()=>{const n=o.querySelector('#fName').value.trim();if(!n){toast('이름을 적어주세요');return}
+    Object.assign(c,{name:n,region:o.querySelector('#fRegion').value,approachMin:o.querySelector('#fMin').value===''?null:+o.querySelector('#fMin').value,parkingUrl:o.querySelector('#fUrl').value.trim(),wayNote:o.querySelector('#fWay').value.trim()});
+    const {nPh,nSp,...save}=c;await DB.put('crags',save);if(isNew)S.crags.push(c);o.remove();loadCrag(c.id);toast('저장했어요')};
+  const del=o.querySelector('#fDel');if(del)armDelete(del,async()=>{for(const p of await DB.byCrag('points',c.id))await DB.del('points',p.id);for(const t of await DB.byCrag('tracks',c.id))await DB.del('tracks',t.id);
+    await DB.del('crags',c.id);S.crags=S.crags.filter(x=>x.id!==c.id);o.remove();loadCrag((S.crags[0]||{}).id);toast('암장을 지웠어요')});}
+
+/* ---------- add photos ---------- */
+async function addPhotos(files){
+  const ph=photos();let order=ph.length?ph[ph.length-1].order+1:1;const needPlace=[];
+  const items=[];for(const f of files){const ex=await readExif(f);items.push({f,ex})}
+  items.sort((a,b)=>(a.ex.time||0)-(b.ex.time||0));
+  let fromGps=0,fromMe=0;
+  for(const {f,ex} of items){const blob=await shrink(f);
+    let ll=ex.ll||null,src='exif';
+    const fresh=!ex.time||Math.abs(Date.now()-ex.time)<15*60000||Math.abs(Date.now()-f.lastModified)<15*60000;
+    if(!ll&&S.me&&fresh&&S.me.acc<150){ll=S.me.ll;src='gps';fromMe++}else if(ll)fromGps++;
+    const p={id:uid(),crag:S.crag.id,kind:'photo',order:order++,ll,src:ll?src:null,note:'',photo:blob,time:ex.time||f.lastModified||Date.now()};
+    await DB.put('points',p);S.points.push(p);if(!ll)needPlace.push(p);}
+  S.sel=photos().length-1;S.auto=false;drawPoints();renderAll();
+  const n=items.length;toast(`사진 ${n}장 추가 · ${fromGps?`사진 위치 ${fromGps}`:''}${fromGps&&fromMe?', ':''}${fromMe?`현재 위치 ${fromMe}`:''}${needPlace.length?` · 위치 없음 ${needPlace.length}`:''}`,3200);
+  if(n===1&&!needPlace.length)editPhoto(photos()[S.sel],true);
+  else if(needPlace.length)placeQueue(needPlace);
+}
+function placeQueue(list){if(!list.length)return;const p=list[0];const i=photos().indexOf(p);
+  startPlacing(`${i+1}번 사진 위치: 지도를 탭하세요`,null,async ll=>{p.ll=ll;p.src='map';await DB.put('points',p);drawPoints();renderAll();placeQueue(list.slice(1))});}
+
+function editPhoto(p,justAdded){const ph=photos();const i=ph.indexOf(p);
+  const o=sheet(`<h2>${i+1}번 경유지<button class="x" data-close>닫기</button></h2>
+   <img src="${blobUrl(p)}" alt="" style="width:100%;max-height:34vh;object-fit:cover;border-radius:12px;margin-bottom:10px">
+   <div class="field"><label for="pNote">메모 (갈림길·방향 등)</label><textarea id="pNote" placeholder="예: 약수터 지나 오른쪽 작은 길로">${esc(p.note)}</textarea></div>
+   <div class="note" style="margin-bottom:8px">위치: ${p.ll?({exif:'사진에 저장된 GPS',gps:'찍을 때 내 위치',map:'지도에서 지정',me:'내 위치로 지정'}[p.src]||'지정됨'):'없음'}</div>
+   <div class="btns"><button class="btn pri" id="pSave">저장</button></div>
+   <div class="btns"><button class="btn" id="pUp"${i===0?' disabled':''}>순서 앞으로</button><button class="btn" id="pDown"${i===ph.length-1?' disabled':''}>순서 뒤로</button></div>
+   <div class="btns"><button class="btn" id="pMap">지도에서 위치 다시 지정</button><button class="btn" id="pMe"${S.me?'':' disabled'}>지금 내 위치로</button></div>
+   <div class="btns"><button class="btn dan" id="pDel">삭제</button></div>`);
+  if(justAdded)setTimeout(()=>o.querySelector('#pNote').focus(),250);
+  const save=async()=>{p.note=o.querySelector('#pNote').value.trim();await DB.put('points',p)};
+  o.querySelector('#pSave').onclick=async()=>{await save();o.remove();renderAll();toast('저장했어요')};
+  const swap=async d=>{await save();const q=ph[i+d];[p.order,q.order]=[q.order,p.order];await DB.put('points',p);await DB.put('points',q);S.sel=i+d;o.remove();drawPoints();renderAll();editPhoto(p)};
+  o.querySelector('#pUp').onclick=()=>swap(-1);o.querySelector('#pDown').onclick=()=>swap(1);
+  o.querySelector('#pMap').onclick=async()=>{await save();o.remove();startPlacing(`${i+1}번 사진 위치: 지도를 탭하세요`,p.ll,async ll=>{p.ll=ll;p.src='map';await DB.put('points',p);drawPoints();renderAll()})};
+  o.querySelector('#pMe').onclick=async()=>{await save();p.ll=S.me.ll;p.src='me';await DB.put('points',p);o.remove();drawPoints();renderAll();toast('내 위치로 옮겼어요')};
+  armDelete(o.querySelector('#pDel'),async()=>{await DB.del('points',p.id);S.points=S.points.filter(x=>x!==p);for(const [k,j] of photos().entries()){}o.remove();drawPoints();renderAll();toast('경유지를 지웠어요')});}
+
+/* ---------- spots (볼더 / 주차장) ---------- */
+function addSpot(){const o=sheet(`<h2>위치 표시<button class="x" data-close>닫기</button></h2>
+   <div class="field"><label>종류</label><div class="btns" style="margin:0"><button class="btn pri" data-k="boulder">◆ 볼더(문제 바위)</button><button class="btn" data-k="parking">P 주차장</button></div></div>
+   <div class="field" id="nmF"><label for="sName">이름</label><input id="sName" placeholder="예: 메인 볼더, 고래바위"></div>
+   <div class="btns"><button class="btn pri" id="sMe"${S.me?'':' disabled'}>지금 내 위치에 표시</button><button class="btn" id="sMap">지도에서 고르기</button></div>
+   <div class="note" style="margin-top:8px">볼더 위치를 표시하면 위쪽에 남은 거리와 방향이 나와요.</div>`);
+  let kind='boulder';o.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{kind=b.dataset.k;o.querySelectorAll('[data-k]').forEach(x=>x.classList.toggle('pri',x===b));o.querySelector('#nmF').hidden=kind!=='boulder'});
+  const make=async ll=>{const p={id:uid(),crag:S.crag.id,kind,ll,name:kind==='boulder'?(o.querySelector('#sName').value.trim()||'볼더'):'주차장',note:''};
+    await DB.put('points',p);S.points.push(p);if(kind==='boulder')S.target=p.id;drawPoints();renderStatus();toast(kind==='boulder'?'볼더 위치를 표시했어요':'주차장을 표시했어요')};
+  o.querySelector('#sMe').onclick=()=>{o.remove();make(S.me.ll)};
+  o.querySelector('#sMap').onclick=()=>{o.remove();startPlacing('표시할 곳을 지도에서 탭하세요',null,make)};}
+function openSpot(p){const isB=p.kind==='boulder';
+  const o=sheet(`<h2>${isB?'◆ ':'P '}${esc(p.name||'')}<button class="x" data-close>닫기</button></h2>
+   ${S.me&&p.ll?`<div class="note" style="margin-bottom:10px">여기까지 ${fmtD(dist(S.me.ll,p.ll))} · ${dirName(bearing(S.me.ll,p.ll))}쪽</div>`:''}
+   ${isB?`<div class="field"><label for="sName2">이름</label><input id="sName2" value="${esc(p.name)}"></div>`:''}
+   <div class="field"><label for="sNote">메모</label><textarea id="sNote">${esc(p.note)}</textarea></div>
+   <div class="btns"><button class="btn pri" id="sSave">저장</button>${isB?`<button class="btn" id="sTgt">${S.target===p.id?'목적지로 선택됨':'목적지로 안내'}</button>`:''}</div>
+   <div class="btns"><a class="btn" style="display:grid;place-items:center;text-decoration:none" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${p.ll[0]},${p.ll[1]}&travelmode=walking">구글지도 길찾기</a><button class="btn" id="sMove">위치 옮기기</button></div>
+   <div class="btns"><button class="btn dan" id="sDel">삭제</button></div>`);
+  o.querySelector('#sSave').onclick=async()=>{if(isB)p.name=o.querySelector('#sName2').value.trim()||'볼더';p.note=o.querySelector('#sNote').value.trim();await DB.put('points',p);o.remove();drawPoints();renderStatus();toast('저장했어요')};
+  const t=o.querySelector('#sTgt');if(t)t.onclick=()=>{S.target=p.id;o.remove();drawPoints();renderStatus()};
+  o.querySelector('#sMove').onclick=()=>{o.remove();startPlacing('새 위치를 지도에서 탭하세요',p.ll,async ll=>{p.ll=ll;await DB.put('points',p);drawPoints();renderStatus()})};
+  armDelete(o.querySelector('#sDel'),async()=>{await DB.del('points',p.id);S.points=S.points.filter(x=>x!==p);if(S.target===p.id)S.target=(spots().find(x=>x.kind==='boulder')||{}).id||null;o.remove();drawPoints();renderStatus()});}
+
+/* ---------- placing on map ---------- */
+let placeMk;
+function startPlacing(txt,ll0,cb){S.placing={cb,ll:null};$('placeTxt').textContent=txt;$('placeBar').hidden=false;$('placeOk').hidden=true;renderStatus();
+  if(ll0){map.panTo(ll0);setPlacePos(ll0)}}
+function setPlacePos(ll){S.placing.ll=ll;if(!placeMk)placeMk=L.marker(ll,{icon:L.divIcon({className:'',html:'<div class="mk mk-bd tgt">＋</div>',iconSize:[30,30],iconAnchor:[4,30]})}).addTo(map);else placeMk.setLatLng(ll);$('placeOk').hidden=false}
+function endPlacing(ok){const P=S.placing;S.placing=null;$('placeBar').hidden=true;if(placeMk){map.removeLayer(placeMk);placeMk=null}renderStatus();if(ok&&P&&P.ll)P.cb(P.ll)}
+
+/* ---------- track recording ---------- */
+const trackLen=pts=>{let s=0;for(let i=1;i<pts.length;i++)s+=dist(pts[i-1],pts[i]);return s};
+let recLine;
+async function toggleRec(){
+  if(!S.rec){if(!S.me){toast('위치를 먼저 잡고 있어요. 잠시 후 다시 눌러주세요');return}
+    S.rec={id:uid(),crag:S.crag.id,date:Date.now(),pts:[S.me.ll]};recLine=L.polyline(S.rec.pts,{color:'#c0392b',weight:5}).addTo(G.track);
+    $('recBtn').classList.add('rec');$('recBtn').querySelector('span').textContent='기록 끝';toast('걷는 길을 기록할게요. 화면을 켜두세요');keepAwake(true);}
+  else{const t=S.rec;S.rec=null;$('recBtn').classList.remove('rec');$('recBtn').querySelector('span').textContent='길 기록';
+    if(t.pts.length>2&&trackLen(t.pts)>15){await DB.put('tracks',t);S.tracks.push(t);toast(`${fmtD(trackLen(t.pts))} 길을 저장했어요`)}else toast('너무 짧아서 저장하지 않았어요');
+    drawPoints();if(!S.follow)keepAwake(false);}
+  renderStatus();}
+function recPoint(){const last=S.rec.pts[S.rec.pts.length-1];if(S.me.acc>40)return;if(dist(last,S.me.ll)<4)return;S.rec.pts.push(S.me.ll);recLine.setLatLngs(S.rec.pts);
+  if(S.rec.pts.length%10===0)try{localStorage.setItem('recDraft',JSON.stringify(S.rec))}catch(e){}}
+
+async function keepAwake(on){try{if(on&&'wakeLock' in navigator&&!S.wake){S.wake=await navigator.wakeLock.request('screen');S.wake.addEventListener('release',()=>S.wake=null)}else if(!on&&S.wake){S.wake.release();S.wake=null}}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&(S.follow||S.rec))keepAwake(true)});
+
+/* ---------- backup ---------- */
+const b2d=b=>new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(b)});
+async function exportData(all){if(!all&&!S.crag)return;
+  const crags=all?(await DB.all('crags')):[S.crag];const ids=new Set(crags.map(c=>c.id));
+  const pts=(await DB.all('points')).filter(p=>ids.has(p.crag));const trk=(await DB.all('tracks')).filter(t=>ids.has(t.crag));
+  const out={app:'boulder-approach',v:1,at:Date.now(),crags:crags.map(({nPh,nSp,...c})=>c),points:[],tracks:trk};
+  for(const p of pts){const {photo,...r}=p;if(photo)r.photo=await b2d(photo);out.points.push(r)}
+  const name=`어프로치_${all?'전체':S.crag.name}_${new Date().toISOString().slice(0,10)}.json`;
+  const file=new File([JSON.stringify(out)],name,{type:'application/json'});
+  if(navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title:name});return}catch(e){if(e.name==='AbortError')return}}
+  const a=document.createElement('a');a.href=URL.createObjectURL(file);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);}
+async function importData(f){try{const d=JSON.parse(await f.text());if(d.app!=='boulder-approach')throw 0;
+  for(const c of d.crags){await DB.put('crags',c);if(!S.crags.some(x=>x.id===c.id))S.crags.push(c)}
+  for(const p of d.points||[]){if(p.photo)p.photo=await (await fetch(p.photo)).blob();await DB.put('points',p)}
+  for(const t of d.tracks||[])await DB.put('tracks',t);
+  toast(`가져왔어요: 암장 ${d.crags.length}곳, 사진·위치 ${(d.points||[]).length}개`);loadCrag(d.crags[0].id)}catch(e){toast('이 파일은 읽을 수 없어요')}}
+function openMenu(){const o=sheet(`<h2>메뉴<button class="x" data-close>닫기</button></h2>
+  <button class="row" id="mExp1"><span class="nm">이 암장 내보내기 (사진 포함)</span><span class="meta">동행에게 공유</span></button>
+  <button class="row" id="mExpA"><span class="nm">전체 백업 내보내기</span></button>
+  <button class="row" id="mImp"><span class="nm">파일에서 가져오기</span></button>
+  <button class="row" id="mComp"><span class="nm">나침반 켜기 (아이폰)</span><span class="meta">내 방향 표시</span></button>
+  <h3>사용법</h3>
+  <div class="note">• 사진과 위치는 이 휴대폰 안에만 저장돼요. 동행과 나누거나 폰을 바꿀 땐 내보내기 파일을 쓰세요.<br>
+  • 처음 갈 때: <b>길 기록</b>을 켜고 걸으면서 갈림길마다 <b>사진 경유지</b>로 사진을 찍어두세요. 볼더에 도착하면 <b>위치 표시</b>로 볼더를 찍어요.<br>
+  • 다음에 갈 때: 지도에 지난 길이 보이고, 걸어가면 가장 가까운 사진이 아래에 자동으로 떠요.<br>
+  • 산에서 신호가 약할 수 있으니 출발 전에 지도를 그 근처로 한번 확대해 보면 지도가 저장돼요.<br>
+  • 홈 화면에 추가하면 앱처럼 쓸 수 있어요 (Safari 공유 → 홈 화면에 추가).</div>`);
+  o.querySelector('#mExp1').onclick=()=>{o.remove();exportData(false)};o.querySelector('#mExpA').onclick=()=>{o.remove();exportData(true)};
+  o.querySelector('#mImp').onclick=()=>{o.remove();$('importInput').click()};o.querySelector('#mComp').onclick=()=>{o.remove();compassPerm();toast('나침반을 켰어요')};}
+
+/* ---------- sheet resize ---------- */
+const SIZES=['mapbig','','photobig'];let sizeI=1;
+function setSize(i){sizeI=(i+3)%3;$('app').classList.remove('mapbig','photobig');if(SIZES[sizeI])$('app').classList.add(SIZES[sizeI]);setTimeout(()=>map.invalidateSize(),230)}
+(function(){let y0=null;const g=$('grab');g.addEventListener('touchstart',e=>{y0=e.touches[0].clientY},{passive:true});
+  g.addEventListener('touchend',e=>{if(y0==null)return;const dy=e.changedTouches[0].clientY-y0;y0=null;if(dy<-25)setSize(sizeI+1);else if(dy>25)setSize(sizeI-1)});
+  g.onclick=()=>setSize(sizeI===2?0:sizeI+1)})();
+
+/* ---------- wire up ---------- */
+async function boot(){
+  initMap();
+  try{await DB.open()}catch(e){toast('저장 공간을 열 수 없어요 (사생활 보호 모드?)',5000);return}
+  try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
+  if(!(await DB.get('meta','seeded'))){for(const c of SEED)await DB.put('crags',c);await DB.put('meta',{k:'seeded',v:1})}
+  S.crags=await DB.all('crags');await countCrags();
+  let last=null;try{last=localStorage.getItem('crag')}catch(e){}
+  await loadCrag(last&&S.crags.some(c=>c.id===last)?last:(S.crags[0]||{}).id);
+  if(!last)openCrags();
+  startGeo();
+  try{const d=JSON.parse(localStorage.getItem('recDraft')||'null');if(d&&d.pts.length>2&&Date.now()-d.date<6*3600e3){localStorage.removeItem('recDraft');if(!S.tracks.some(t=>t.id===d.id)){await DB.put('tracks',d);if(d.crag===S.crag.id){S.tracks.push(d);drawPoints()}toast('끊겼던 길 기록을 저장했어요')}}}catch(e){}
+}
+$('cragBtn').onclick=async()=>{await countCrags();openCrags()};
+$('infoBtn').onclick=()=>{if(!needCrag())openInfo()};$('menuBtn').onclick=openMenu;
+$('followBtn').onclick=()=>{S.follow=!S.follow;$('followBtn').classList.toggle('on',S.follow);if(S.follow){if(S.me)map.setView(S.me.ll,Math.max(map.getZoom(),17));else toast('위치를 찾는 중이에요');keepAwake(true);compassPerm()}else if(!S.rec)keepAwake(false)};
+$('fitBtn').onclick=()=>{S.follow=false;$('followBtn').classList.remove('on');fitAll()};
+$('layerBtn').onclick=()=>setLayer((S.layer+1)%LAYERS.length);
+$('sizeBtn').onclick=()=>setSize(sizeI===2?0:sizeI+1);
+const needCrag=()=>{if(S.crag)return false;toast('먼저 암장을 추가하거나 가져와 주세요');openCrags();return true};
+$('addPhotoBtn').onclick=()=>{if(!needCrag())$('photoInput').click()};
+$('photoInput').onchange=e=>{const f=[...e.target.files];e.target.value='';if(f.length)addPhotos(f)};
+$('importInput').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)importData(f)};
+$('addSpotBtn').onclick=()=>{if(!needCrag())addSpot()};$('recBtn').onclick=()=>{if(!needCrag()||S.rec)toggleRec()};
+$('placeCancel').onclick=()=>endPlacing(false);$('placeOk').onclick=()=>endPlacing(true);
+if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
+boot();
+</script>
+</body>
+</html>
