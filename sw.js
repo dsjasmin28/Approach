@@ -1,5 +1,5 @@
 // 앱 화면과 지도 타일을 저장해 신호가 약한 산에서도 열리게 함
-const APP='approach-app-v4', TILES='approach-tiles-v1', MAX_TILES=3000;
+const APP='approach-app-v5', TILES='approach-tiles-v1', MAX_TILES=3000;
 const SHELL=['./','index.html','manifest.webmanifest','icon-192.png','icon-512.png',
  'lib/leaflet.js','lib/leaflet.css','lib/PretendardVariable.woff2','lib/images/marker-icon.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(APP).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting()))});
